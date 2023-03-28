@@ -2,88 +2,118 @@
 
 session_start();
 
-$configuration = [
-	"tokenURL" => "https://discordapp.com/api/oauth2/token",
-	"apiURLBase" => "https://discordapp.com/api/users/@me",
-	"OAUTH2_CLIENT_ID" => "XXXXXXXXXXXXXXXX",
-	"OAUTH2_CLIENT_SECRET" => "XXXXXXXXXXXXXXXX",
-	"RETURN_URL" => "https://example.com/login.php",
-	"scope" => ["identify", "email"] // https://discord.com/developers/docs/topics/oauth2#shared-resources-oauth2-scopes
+// Configuration
+$config = [
+    "tokenURL" => "https://discord.com/api/oauth2/token",
+    "apiURLBase" => "https://discord.com/api/users/@me",
+    "clientID" => "YOUR_CLIENT_ID",
+    "clientSecret" => "YOUR_CLIENT_SECRET",
+    "redirectURI" => "https://example.com/login.php",
+    "scopes" => ["identify", "email"]
 ];
 
-if (isset($_GET["login"]))
-{
-	$_SESSION["state"] = bin2hex(random_bytes(32));
+// Login
+if (isset($_GET["login"])) {
+    $_SESSION["state"] = bin2hex(random_bytes(32));
 
-	$params = array(
-		"client_id" => $configuration["OAUTH2_CLIENT_ID"],
-		"redirect_uri" => $configuration["RETURN_URL"],
-		"response_type" => "code",
-		"scope" => implode(" ", $configuration["scope"]),
-		"state" => $_SESSION["state"]
-	);
+    $params = [
+        "client_id" => $config["clientID"],
+        "redirect_uri" => $config["redirectURI"],
+        "response_type" => "code",
+        "scope" => implode(" ", $config["scopes"]),
+        "state" => $_SESSION["state"]
+    ];
 
-	header("Location: https://discordapp.com/api/oauth2/authorize?" . http_build_query($params));
-	die();
+    header("Location: https://discord.com/api/oauth2/authorize?" . http_build_query($params));
+    die();
 }
 
-if (isset($_GET["code"], $_GET["state"]))
-{
-
-	if (empty($_SESSION["state"]) || $_SESSION["state"] !== $_GET["state"])
-	{
-		header("Location: ?login");
-		die();
-	}
-
-	unset($_SESSION["state"]);
-
-	$token = HTTP_POST($configuration["tokenURL"], [
-		"grant_type" => "authorization_code",
-		"client_id" => $configuration["OAUTH2_CLIENT_ID"],
-		"client_secret" => $configuration["OAUTH2_CLIENT_SECRET"],
-		"redirect_uri" => $configuration["RETURN_URL"],
-		"code" => $_GET["code"]
-	]);
-
-	$token = json_decode($token, true)["access_token"];
-
-	$user = HTTP_POST($configuration["apiURLBase"], NULL, $token);
-
-	$user = json_decode($user, true);
-
-	foreach ($user as $key => $value)
-	{
-		echo sprintf("<p><b>%s</b>: %s </p>", $key, htmlspecialchars($value));
-	}
-}
-else
-{
-	header("Location: ?login");
-	die();
+// Check if state is set
+if (!isset($_GET["state"]) || empty($_SESSION["state"]) || $_SESSION["state"] !== $_GET["state"]) {
+    header("Location: ?login");
+    die();
 }
 
-function HTTP_POST($url, $post = NULL, $token = NULL)
-{
-	$ch = curl_init();
-	curl_setopt($ch, CURLOPT_URL, $url);
+// Unset state
+unset($_SESSION["state"]);
 
-	if (isset($post))
-	{
-		curl_setopt($ch, CURLOPT_POST, 1);
-		curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post));
-	}
+// Get access token
+$token = getToken($_GET["code"]);
+if (!$token) {
+    header("Location: ?login");
+    die();
+}
 
-	if (isset($token))
-	{
-		$headers[] = "Accept: application/json";
-		$headers[] = "Authorization: Bearer $token";
-		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-	}
+// Get user information
+$user = getUser($token);
+if (!$user) {
+    header("Location: ?login");
+    die();
+}
 
-	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-	$output = curl_exec($ch);
-	curl_close($ch);
+// Display user information
+foreach ($user as $key => $value) {
+    echo sprintf("<p><b>%s</b>: %s</p>", $key, htmlspecialchars($value));
+}
 
-	return $output;
+function getToken($code) {
+    global $config;
+
+    $params = [
+        "grant_type" => "authorization_code",
+        "client_id" => $config["clientID"],
+        "client_secret" => $config["clientSecret"],
+        "redirect_uri" => $config["redirectURI"],
+        "code" => $code
+    ];
+
+    $response = httpPost($config["tokenURL"], $params);
+    if (!$response) {
+        return false;
+    }
+
+    $json = json_decode($response, true);
+    if (!isset($json["access_token"])) {
+        return false;
+    }
+
+    return $json["access_token"];
+}
+
+function getUser($token) {
+    global $config;
+
+    $response = httpPost($config["apiURLBase"], null, [
+        "Authorization: Bearer {$token}",
+        "Accept: application/json"
+    ]);
+    if (!$response) {
+        return false;
+    }
+
+    $json = json_decode($response, true);
+    if (!$json) {
+        return false;
+    }
+
+    return $json;
+}
+
+function httpPost($url, $params = null, $headers = null) {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+    if ($params) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($params));
+    }
+
+    if ($headers) {
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    }
+
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    return $response;
 }
